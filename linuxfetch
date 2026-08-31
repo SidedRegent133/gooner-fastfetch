@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# linuxfetch - terminal Linux system information using the uploaded artwork
+# Generated from the supplied ASCII-art image.
+#
+# Usage:
+#   chmod +x linuxfetch
+#   ./linuxfetch
+#
+# Optional:
+#   NO_COLOR=1 ./linuxfetch
+
+set -u
+
+if [[ -t 1 && "${NO_COLOR:-0}" != "1" ]]; then
+    R='\033[38;5;167m'   # warm red
+    P='\033[38;5;174m'   # pink
+    O='\033[38;5;216m'   # peach
+    W='\033[38;5;252m'   # light text
+    D='\033[38;5;245m'   # muted text
+    B='\033[1m'
+    Z='\033[0m'
+else
+    R='' P='' O='' W='' D='' B='' Z=''
+fi
+
+get_os() {
+    if [[ -r /etc/os-release ]]; then
+        . /etc/os-release
+        printf '%s' "${PRETTY_NAME:-${NAME:-Linux}}"
+    else
+        printf 'Linux'
+    fi
+}
+
+get_packages() {
+    if command -v pacman >/dev/null 2>&1; then
+        pacman -Qq 2>/dev/null | wc -l | tr -d ' '
+    elif command -v dpkg >/dev/null 2>&1; then
+        dpkg-query -f '.\n' -W 2>/dev/null | wc -l | tr -d ' '
+    elif command -v rpm >/dev/null 2>&1; then
+        rpm -qa 2>/dev/null | wc -l | tr -d ' '
+    elif command -v apk >/dev/null 2>&1; then
+        apk info 2>/dev/null | wc -l | tr -d ' '
+    else
+        printf '?'
+    fi
+}
+
+get_shell() {
+    basename "${SHELL:-unknown}"
+}
+
+get_resolution() {
+    if command -v xrandr >/dev/null 2>&1; then
+        xrandr --current 2>/dev/null |
+            awk '/ connected/{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+x[0-9]+\+/) {sub(/\+.*/, "", $i); print $i; exit}}'
+    elif command -v wlr-randr >/dev/null 2>&1; then
+        wlr-randr 2>/dev/null | awk '/current/{print $1; exit}'
+    fi
+    printf '%s' '?'
+}
+
+get_de() {
+    printf '%s' "${XDG_CURRENT_DESKTOP:-${XDG_SESSION_DESKTOP:-?}}"
+}
+
+get_wm() {
+    if command -v hyprctl >/dev/null 2>&1 && hyprctl -j monitors >/dev/null 2>&1; then
+        printf 'Hyprland'
+    elif [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+        printf '%s' "${XDG_CURRENT_DESKTOP:-Wayland}"
+    elif command -v xprop >/dev/null 2>&1; then
+        xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null >/dev/null && \
+            printf 'X11 WM' || printf '?'
+    else
+        printf '?'
+    fi
+}
+
+get_cpu() {
+    awk -F: '/model name/{gsub(/^[ \t]+/, "", $2); print $2; exit}' /proc/cpuinfo 2>/dev/null ||
+        printf '?'
+}
+
+get_gpu() {
+    if command -v lspci >/dev/null 2>&1; then
+        lspci 2>/dev/null | awk -F': ' '/VGA compatible controller|3D controller|Display controller/{print $2; exit}'
+    elif command -v glxinfo >/dev/null 2>&1; then
+        glxinfo 2>/dev/null | awk -F': ' '/OpenGL renderer string/{print $2; exit}'
+    else
+        printf '?'
+    fi
+}
+
+get_memory() {
+    awk '/MemTotal:/{t=$2} /MemAvailable:/{a=$2} END {
+        used=(t-a)/1024/1024; total=t/1024/1024;
+        printf "%.1f GiB / %.1f GiB", used, total
+    }' /proc/meminfo 2>/dev/null
+}
+
+get_disk() {
+    df -h / 2>/dev/null | awk 'NR==2{print $3 " / " $2 " (" $5 ")"}'
+}
+
+get_ip() {
+    if command -v ip >/dev/null 2>&1; then
+        ip route get 1.1.1.1 2>/dev/null |
+            awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}'
+    fi
+    printf '?'
+}
+
+get_battery() {
+    local bat
+    for bat in /sys/class/power_supply/BAT*; do
+        [[ -d "$bat" ]] || continue
+        local cap status
+        cap=$(cat "$bat/capacity" 2>/dev/null || printf '?')
+        status=$(cat "$bat/status" 2>/dev/null || printf '?')
+        printf '%s%% [%s]' "$cap" "$status"
+        return
+    done
+    printf 'N/A'
+}
+
+get_install_date() {
+    # Best-effort: root filesystem creation time where stat supports it.
+    local d
+    d=$(stat -c '%w' / 2>/dev/null || true)
+    if [[ -n "$d" && "$d" != "-" ]]; then
+        printf '%s' "${d%% *}"
+    else
+        printf 'unknown'
+    fi
+}
+
+LOGO='::::---::--::::-::-::..::::.::..:::-::----:-::.:::..\n:-:::--::---:----::-.::.:........:-::::---::-:.:::..\n.::::--:::--::::::::::::::::::..:--::::---::-:::-:..\n:-::::--::----:::-::::::-:::::::---::::---::-::::-:.\n:--::::--::--------::---:-::--:-:-:::::---::-:::--:.\n:--::::---:--------:----:-:::::::::::::---:--::---:.\n:--:::::--::---------::::::::----::::----::--:::--:.\n:--:::::--:::---::---------:----:::::::::::--::::-:.\n:::::::::---::-------::-:::::----::::::::::--::::::.\n::::::::::---::------:::::--:::---:::::::------:--:.\n:-::::::::::::-----::--:-::-::::---::::--::::::-:::.\n::::::---:::::::--::---::::::::::----::----::.:-:-:.\n:-::-----:..::-::::--:--:::---::::::::..:::::-----:.\n.:::-----:--------:-:---::::::::-:::::--:::::--::-:.\n.:------:::::--:::----:-::::::::::::--:::-::--:::-:.\n:::::::::::--:--:::-::--:---::::::-::::------::::...\n...::::::----:::::--:::-::-:::::-::::--:-:::::-:.::.\n:::::::::::::::::.:-:::-.:::---::::.::::::-:::----:.'
+
+# Print the logo on the left and live system info on the right.
+mapfile -t LOGO_LINES <<< "$LOGO"
+
+OS="$(get_os)"
+KERNEL="$(uname -sr)"
+UPTIME="$(uptime -p 2>/dev/null | sed 's/^up //')"
+PKGS="$(get_packages)"
+SHELL_NAME="$(get_shell)"
+RES="$(get_resolution)"
+DE="$(get_de)"
+WM="$(get_wm)"
+CPU="$(get_cpu)"
+GPU="$(get_gpu)"
+MEM="$(get_memory)"
+DISK="$(get_disk)"
+IP="$(get_ip)"
+BAT="$(get_battery)"
+USER_NAME="${USER:-$(id -un 2>/dev/null || printf '?')}"
+HOST="$(hostname 2>/dev/null || printf '?')"
+INSTALL="$(get_install_date)"
+
+# Keep the info column readable even on smaller terminals.
+printf '\n'
+info=(
+  "${R}${B}LINUX SYSTEM${Z}"
+  "${D}────────────────────────────${Z}"
+  "${R}OS${Z}        : ${W}${OS}${Z}"
+  "${R}Kernel${Z}    : ${W}${KERNEL}${Z}"
+  "${R}Uptime${Z}    : ${W}${UPTIME}${Z}"
+  "${R}Packages${Z}  : ${W}${PKGS}${Z}"
+  "${R}Shell${Z}     : ${W}${SHELL_NAME}${Z}"
+  "${R}Resolution${Z}: ${W}${RES}${Z}"
+  "${R}DE${Z}        : ${W}${DE}${Z}"
+  "${R}WM${Z}        : ${W}${WM}${Z}"
+  "${R}CPU${Z}       : ${W}${CPU}${Z}"
+  "${R}GPU${Z}       : ${W}${GPU}${Z}"
+  "${R}Memory${Z}    : ${W}${MEM}${Z}"
+  "${R}Disk /${Z}    : ${W}${DISK}${Z}"
+  "${R}Local IP${Z}  : ${W}${IP}${Z}"
+  "${R}Battery${Z}   : ${W}${BAT}${Z}"
+  "${R}User${Z}      : ${W}${USER_NAME}@${HOST}${Z}"
+  "${R}Installed${Z} : ${W}${INSTALL}${Z}"
+)
+
+for i in "${!LOGO_LINES[@]}"; do
+    left="${LOGO_LINES[$i]}"
+    right="${info[$i]:-}"
+    printf "  ${P}%-52s${Z}  %b\n" "$left" "$right"
+done
+
+printf '\n  %b%s%b\n\n' "$O" "$USER_NAME@${HOST} ~ $" "$Z"
